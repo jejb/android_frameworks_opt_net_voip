@@ -63,6 +63,12 @@ public class SipErrorCode {
     /** When the server is not reachable. */
     public static final int SERVER_UNREACHABLE = -12;
 
+    /** Auto Registration requesting sip group restart */
+    public static final int RESTART = -13;
+
+    /** Exception thrown out of network path: send/receive/socket etc */
+    public static final int EXCEPTION = -14;
+
     public static String toString(int errorCode) {
         switch (errorCode) {
             case NO_ERROR:
@@ -91,6 +97,10 @@ public class SipErrorCode {
                 return "CROSS_DOMAIN_AUTHENTICATION";
             case SERVER_UNREACHABLE:
                 return "SERVER_UNREACHABLE";
+            case RESTART:
+                return "RESTART";
+            case EXCEPTION:
+                return "EXCEPTION";
             default:
                 return "UNKNOWN";
         }
