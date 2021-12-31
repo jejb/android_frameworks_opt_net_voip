@@ -597,6 +597,12 @@ class SipSessionGroup implements SipListener {
             return new SipSessionImpl(mProxy.getListener());
         }
 
+        void restart() {
+            Rlog.i(SSI_TAG, "restart requested, signalling to SipSessionGroupExt:");
+            if (mCallReceiverSession != null)
+                mCallReceiverSession.mProxy.onError(mCallReceiverSession, SipErrorCode.RESTART, "forcibly terminating on registration failure");
+        }
+
         private void reset() {
             mInCall = false;
             removeSipSession(this);
@@ -1085,6 +1091,7 @@ class SipSessionGroup implements SipListener {
                         generateTag(), duration);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                Rlog.i(SSI_TAG, "onRegistering - Register Command");
                 mProxy.onRegistering(this);
                 return true;
             } else if (DEREGISTER == evt) {
@@ -1093,6 +1100,7 @@ class SipSessionGroup implements SipListener {
                         generateTag(), 0);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                Rlog.i(SSI_TAG, "onRegistering - Deregister Command");
                 mProxy.onRegistering(this);
                 return true;
             }
@@ -1409,6 +1417,7 @@ class SipSessionGroup implements SipListener {
 
         private void onError(int errorCode, String message) {
             cancelSessionTimer();
+            Rlog.i(SSI_TAG, "onError(" + SipErrorCode.toString(errorCode) +", \"" + message + "\" state = " + mState);
             switch (mState) {
                 case SipSession.State.REGISTERING:
                 case SipSession.State.DEREGISTERING:
@@ -1468,17 +1477,21 @@ class SipSessionGroup implements SipListener {
             } else if (exception instanceof IOException) {
                 return SipErrorCode.SOCKET_ERROR;
             } else {
-                return SipErrorCode.CLIENT_ERROR;
+                return SipErrorCode.EXCEPTION;
             }
         }
 
         private void onRegistrationDone(int duration) {
             reset();
+            Rlog.i(SSI_TAG, "onRegistrationDone");
             mProxy.onRegistrationDone(this, duration);
         }
 
         private void onRegistrationFailed(int errorCode, String message) {
             reset();
+            Rlog.i(SSI_TAG, "onRegistrationFailed " +
+		  SipErrorCode.toString(errorCode) +
+		  " message =\"" + message + "\"");
             mProxy.onRegistrationFailed(this, errorCode, message);
         }
 
