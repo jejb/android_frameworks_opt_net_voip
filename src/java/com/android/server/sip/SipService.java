@@ -604,6 +604,29 @@ public final class SipService extends ISipService.Stub {
                 String message) {
             if (SSGE_DBG) log("onError: errorCode=" + errorCode + " desc="
                     + SipErrorCode.toString(errorCode) + ": " + message);
+            if (errorCode != SipErrorCode.RESTART) {
+                return;
+            }
+            Rlog.i(SSGE_TAG, "onError says restart");
+            // blocks the broadcast onConnectivityChanged receiver
+            synchronized(SipService.this) {
+                if (mNetworkType == -1) {
+                    return;
+                }
+                int oldNetworkType = mNetworkType;
+                mNetworkType = -1;
+                try {
+                    onConnectivityChanged(false);
+                } catch (SipException e) {
+                    // do nothing
+                }
+                mNetworkType = oldNetworkType;
+                try {
+                    onConnectivityChanged(true);
+                } catch (SipException e) {
+                    // do nothing
+                }
+            }
         }
 
         public boolean isOpenedToReceiveCalls() {
@@ -1012,6 +1035,7 @@ public final class SipService extends ISipService.Stub {
             int duration = SHORT_EXPIRY_TIME * mBackoff;
             if (duration > 3600) {
                 duration = 3600;
+                mSession.restart();
             } else {
                 mBackoff *= 2;
             }
@@ -1088,6 +1112,16 @@ public final class SipService extends ISipService.Stub {
                     case SipErrorCode.SERVER_UNREACHABLE:
                         if (SAR_DBG) log("   pause auto-registration");
                         stop();
+                        break;
+                    case SipErrorCode.EXCEPTION:
+                    case SipErrorCode.SOCKET_ERROR:
+                    case SipErrorCode.CLIENT_ERROR:
+                        /*
+                         * Usually happens when the socket gets into
+                         * a bad state and must be closed and reopened
+                         * to fix it, so restart immediately to expedite
+                         */
+                        mSession.restart();
                         break;
                     default:
                         restartLater();
