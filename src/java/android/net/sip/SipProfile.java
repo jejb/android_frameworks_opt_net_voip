@@ -61,6 +61,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
     private String mProfileName;
     private String mAuthUserName;
     private int mPort = DEFAULT_PORT;
+    private int mRegistrationTimeout = 3600;
     private boolean mSendKeepAlive = false;
     private boolean mAutoRegistration = true;
     private transient int mCallingUid = 0;
@@ -111,6 +112,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
             mDisplayName = profile.getDisplayName();
             mProxyAddress = profile.getProxyAddress();
             mProfile.mPort = profile.getPort();
+            mProfile.mRegistrationTimeout = profile.getRegistrationTimeout();
         }
 
         /**
@@ -202,6 +204,21 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
                 throw new IllegalArgumentException("incorrect port arugment: " + port);
             }
             mProfile.mPort = port;
+            return this;
+        }
+
+        /**
+         * Sets the registration timeout of the server. By default, it is 3600.
+         *
+         * @param timeout of the server
+         * @return this builder object
+         * @throws IllegalArgumentException if the port number is out of range
+         */
+        public Builder setRegistrationTimeout(int timeout) throws IllegalArgumentException {
+            if ((timeout > 3600) || (timeout < 10)) {
+                throw new IllegalArgumentException("incorrect registration timeout arugment: " + timeout);
+            }
+            mProfile.mRegistrationTimeout = timeout;
             return this;
         }
 
@@ -323,6 +340,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
         mCallingUid = in.readInt();
         mPort = in.readInt();
         mAuthUserName = in.readString();
+        mRegistrationTimeout = in.readInt();
     }
 
     @Override
@@ -338,6 +356,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
         out.writeInt(mCallingUid);
         out.writeInt(mPort);
         out.writeString(mAuthUserName);
+        out.writeInt(mRegistrationTimeout);
     }
 
     @Override
@@ -434,6 +453,15 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
      */
     public int getPort() {
         return mPort;
+    }
+
+    /**
+     * Gets the registration timeout of the SIP server.
+     *
+     * @return the registration timeout of the SIP server
+     */
+    public int getRegistrationTimeout() {
+         return mRegistrationTimeout;
     }
 
     /**

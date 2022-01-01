@@ -65,7 +65,6 @@ import javax.sip.SipException;
 public final class SipService extends ISipService.Stub {
     static final String TAG = "SipService";
     static final boolean DBG = true;
-    private static final int EXPIRY_TIME = 3600;
     private static final int SHORT_EXPIRY_TIME = 10;
     private static final int MIN_EXPIRY_TIME = 60;
     private static final int DEFAULT_KEEPALIVE_INTERVAL = 10; // in seconds
@@ -839,6 +838,7 @@ public final class SipService extends ISipService.Stub {
         private boolean mRunning = false;
 
         private int mKeepAliveSuccessCount = 0;
+        private int mRegistrationTimeout;
 
         public void start(SipSessionGroup group) {
             if (!mRunning) {
@@ -857,6 +857,7 @@ public final class SipService extends ISipService.Stub {
                 SAR_TAG = "SipAutoReg:" +
                         obfuscateSipUri(mSession.getLocalProfile().getUriString());
                 if (SAR_DBG) log("start: group=" + group);
+                mRegistrationTimeout = mSession.getLocalProfile().getRegistrationTimeout();
             }
         }
 
@@ -925,7 +926,7 @@ public final class SipService extends ISipService.Stub {
                 // Acquire wake lock for the registration process. The
                 // lock will be released when registration is complete.
                 mMyWakeLock.acquire(mSession);
-                mSession.register(EXPIRY_TIME);
+                mSession.register(mRegistrationTimeout);
             }
         }
 
@@ -1018,10 +1019,10 @@ public final class SipService extends ISipService.Stub {
 
                 mErrorCode = SipErrorCode.NO_ERROR;
                 mErrorMessage = null;
-                if (SAR_DBG) log("run: registering");
+                if (SAR_DBG) log("run: registering with timeout " + mRegistrationTimeout);
                 if (mNetworkType != -1) {
                     mMyWakeLock.acquire(mSession);
-                    mSession.register(EXPIRY_TIME);
+                    mSession.register(mRegistrationTimeout);
                 }
             }
         }
@@ -1034,8 +1035,8 @@ public final class SipService extends ISipService.Stub {
 
         private int backoffDuration() {
             int duration = SHORT_EXPIRY_TIME * mBackoff;
-            if (duration > 3600) {
-                duration = 3600;
+            if (duration > mRegistrationTimeout) {
+                duration = mRegistrationTimeout;
                 mSession.restart();
             } else {
                 mBackoff *= 2;
@@ -1078,7 +1079,7 @@ public final class SipService extends ISipService.Stub {
                     if (!mRegistered) {
                         mRegistered = true;
                         // allow some overlap to avoid call drop during renew
-                        duration -= MIN_EXPIRY_TIME;
+                        duration /= 2;
                         if (duration < MIN_EXPIRY_TIME) {
                             duration = MIN_EXPIRY_TIME;
                         }
