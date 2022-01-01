@@ -96,6 +96,7 @@ class SipSessionGroup implements SipListener {
     private static final int CANCEL_CALL_TIMER = 3; // in seconds
     private static final int END_CALL_TIMER = 3; // in seconds
     private static final int KEEPALIVE_TIMEOUT = 5; // in seconds
+    private static final int REGISTRATION_TIMEOUT = 5;       // in seconds
     private static final int INCALL_KEEPALIVE_INTERVAL = 10; // in seconds
     private static final long WAKE_LOCK_HOLDING_TIME = 500; // in milliseconds
 
@@ -960,6 +961,7 @@ class SipSessionGroup implements SipListener {
                 switch (statusCode) {
                 case Response.OK:
                     int state = mState;
+                    cancelSessionTimer();
                     onRegistrationDone((state == SipSession.State.REGISTERING)
                             ? getExpiryTime(((ResponseEvent) evt).getResponse())
                             : -1);
@@ -969,6 +971,7 @@ class SipSessionGroup implements SipListener {
                     handleAuthentication(event);
                     return true;
                 default:
+                    cancelSessionTimer();
                     if (statusCode >= 500) {
                         onRegistrationFailed(response);
                         return true;
@@ -1091,6 +1094,7 @@ class SipSessionGroup implements SipListener {
                         generateTag(), duration);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                startSessionTimer(REGISTRATION_TIMEOUT);
                 Rlog.i(SSI_TAG, "onRegistering - Register Command");
                 mProxy.onRegistering(this);
                 return true;
@@ -1100,6 +1104,7 @@ class SipSessionGroup implements SipListener {
                         generateTag(), 0);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                startSessionTimer(REGISTRATION_TIMEOUT);
                 Rlog.i(SSI_TAG, "onRegistering - Deregister Command");
                 mProxy.onRegistering(this);
                 return true;
