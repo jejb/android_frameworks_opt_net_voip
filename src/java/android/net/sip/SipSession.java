@@ -128,6 +128,9 @@ public final class SipSession {
                 String sessionDescription) {
         }
 
+        public void onMWI(int count, int total, String call) {
+        }
+
         /**
          * Called when a RINGING response is received for the INVITE request sent
          *
@@ -476,6 +479,13 @@ public final class SipSession {
                 if (mListener != null) {
                     mListener.onRinging(SipSession.this, caller,
                             sessionDescription);
+                }
+            }
+
+            @Override
+            public void onMWI(int count, int total, String call) {
+                if (mListener != null) {
+                    mListener.onMWI(count, total, call);
                 }
             }
 

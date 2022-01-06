@@ -597,6 +597,24 @@ public final class SipService extends ISipService.Stub {
         }
 
         @Override
+        public void onMWI(int count, int total, String call) {
+            synchronized (SipService.this) {
+                try {
+                    Intent intent = SipManager.createIncomingMWIBroadcast(
+                        count, total, call);
+
+                    if (SSGE_DBG) log("onMWI: count = " + count + " total ="
+                                      + total + " call = " + call
+                                      + " " + mIncomingCallPendingIntent);
+                    mIncomingCallPendingIntent.send(mContext,
+                            SipManager.INCOMING_CALL_RESULT_CODE, intent);
+                } catch (PendingIntent.CanceledException e) {
+                    loge("onMWI: pendingIntent is canceled, drop update", e);
+                }
+            }
+        }
+
+        @Override
         public void onError(ISipSession session, int errorCode,
                 String message) {
             if (SSGE_DBG) log("onError: errorCode=" + errorCode + " desc="

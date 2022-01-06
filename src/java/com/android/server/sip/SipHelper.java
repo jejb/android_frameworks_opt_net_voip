@@ -230,6 +230,24 @@ class SipHelper {
         }
     }
 
+    public ClientTransaction sendSubscribe(SipProfile userProfile, String tag,
+            String event) throws SipException {
+        int expiry = userProfile.getRegistrationTimeout();
+        try {
+            Request request = createRequest(Request.SUBSCRIBE, userProfile, tag);
+            request.addHeader(createContactHeader(userProfile));
+            request.addHeader(mHeaderFactory.createEventHeader(event));
+            request.addHeader(mHeaderFactory.createExpiresHeader(expiry));
+
+            ClientTransaction clientTransaction =
+                    mSipProvider.getNewClientTransaction(request);
+            clientTransaction.sendRequest();
+            return clientTransaction;
+        } catch (ParseException e) {
+            throw new SipException("sendSubscribe()", e);
+        }
+    }
+
     private Request createRequest(String requestType, SipProfile userProfile,
             String tag) throws ParseException, SipException {
         FromHeader fromHeader = createFromHeader(userProfile, tag);
