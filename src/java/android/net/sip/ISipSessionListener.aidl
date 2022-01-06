@@ -41,6 +41,8 @@ interface ISipSessionListener {
     void onRinging(in ISipSession session, in SipProfile caller,
             String sessionDescription);
 
+    void onMWI(int count, int total, String call);
+
     /**
      * Called when a RINGING response is received for the INVITE request sent
      *

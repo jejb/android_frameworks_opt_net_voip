@@ -29,6 +29,9 @@ public class SipSessionAdapter extends ISipSessionListener.Stub {
             String sessionDescription) {
     }
 
+    public void onMWI(int count, int total, String call) {
+    }
+
     public void onRingingBack(ISipSession session) {
     }
 
