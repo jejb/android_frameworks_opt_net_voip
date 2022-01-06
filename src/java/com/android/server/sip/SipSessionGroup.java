@@ -18,6 +18,7 @@ package com.android.server.sip;
 
 import gov.nist.javax.sip.clientauthutils.AccountManager;
 import gov.nist.javax.sip.clientauthutils.UserCredentials;
+import gov.nist.javax.sip.header.ContentType;
 import gov.nist.javax.sip.header.ProxyAuthenticate;
 import gov.nist.javax.sip.header.ReferTo;
 import gov.nist.javax.sip.header.SIPHeaderNames;
@@ -47,6 +48,7 @@ import java.util.EventObject;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Scanner;
 
 import javax.sip.ClientTransaction;
 import javax.sip.Dialog;
@@ -435,6 +437,115 @@ class SipSessionGroup implements SipListener {
         return newSession;
     }
 
+    private class SipSessionMWIReceiverImpl extends SipSessionImpl {
+        private static final String SSCRI_TAG = "SipSessionMWIReceiverImpl";
+        private static final boolean SSCRI_DBG = true;
+
+        public SipSessionMWIReceiverImpl(ISipSessionListener listener) {
+            super(listener);
+            try {
+                mClientTransaction = mSipHelper.sendSubscribe(mLocalProfile,
+                    generateTag(), "message-summary");
+                addSipSession(this);
+                mDialog = mClientTransaction.getDialog();
+            } catch (SipException e) {
+                loge("failed to subscribe", e);
+                removeSipSession(this);
+            }
+        }
+
+        private void processMWI(RequestEvent event)
+            throws SipException {
+            if (SSCRI_DBG) log("processMWI begin");
+            ContentType ct = (ContentType)event.getRequest()
+                .getHeader(ContentType.NAME);
+            if (ct == null || !ct.getMediaType().equals("application")
+                || !ct.getMediaSubType().equals("simple-message-summary")) {
+                log("processMWI: got wrong content-type: " + ct);
+                return;
+            }
+            Integer count = null;
+            Integer total = null;
+            String call = null;
+            String body = extractContent(event.getRequest()).toLowerCase();
+            for (String line: body.split("[\r\n]+")) {
+                try {
+                    Scanner s = new Scanner(line);
+                    String type = s.next();
+                    if (type.equals("voice-message:")) {
+                        String[] val = s.next().split("/");
+                        count = Integer.decode(val[0]);
+                        total = Integer.decode(val[1]);
+                    } else if (type.equals("message-account:")) {
+                        String[] val1 = s.next().split(":");
+                        // val1[0] should be "sip"
+                        String[] val2 = val1[1].split("@");
+                        call = val2[0];
+                    }
+                } catch (Exception e) {
+                    // do nothing
+                }
+            }
+            if (count == null || call == null) {
+                log("processMWI: failed to parse message " + body);
+                return;
+            }
+            if (SSCRI_DBG) log("processMWI: sending onMWI(" + count + ", "
+                               + total + ", " + call + ")");
+            mProxy.onMWI(count, total, call);
+            if (SSCRI_DBG) log("processMWI: done proxy");
+        }
+
+        private boolean processResponse(ResponseEvent evt)
+            throws SipException {
+            if (expectResponse(Request.SUBSCRIBE, evt)) {
+                Response response = evt.getResponse();
+                int statusCode = response.getStatusCode();
+
+                switch(statusCode) {
+                case Response.OK:
+                    return true;
+                case Response.UNAUTHORIZED:
+                case Response.PROXY_AUTHENTICATION_REQUIRED:
+                    handleAuthentication(evt);
+                    return true;
+                default:
+                    log("Response to SUBSCRIBE Unexpected: " + evt);
+                    removeSipSession(this);
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        public boolean process(EventObject evt) throws SipException {
+            log("process: " + this + ": "
+                    + SipSession.State.toString(mState) + ": processing "
+                    + logEvt(evt));
+            if (evt instanceof ResponseEvent)
+                return processResponse((ResponseEvent)evt);
+            if (isRequestEvent(Request.OPTIONS, evt)) {
+                mSipHelper.sendResponse((RequestEvent) evt, Response.OK);
+                return true;
+            } else if (isRequestEvent(Request.NOTIFY, evt)) {
+                try {
+                    mSipHelper.sendResponse((RequestEvent) evt, Response.OK);
+                    processMWI((RequestEvent) evt);
+                } catch (Exception e) {
+                    loge("processing NOTIFY", e);
+                }
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        private void log(String s) {
+            Rlog.d(SSCRI_TAG, s);
+        }
+    }
+
     private class SipSessionCallReceiverImpl extends SipSessionImpl {
         private static final String SSCRI_TAG = "SipSessionCallReceiverImpl";
         private static final boolean SSCRI_DBG = true;
@@ -550,6 +661,7 @@ class SipSessionGroup implements SipListener {
         private SipKeepAlive mSipKeepAlive;
 
         private SipSessionImpl mSipSessionImpl;
+        private SipSessionImpl mMWISession = null;
 
         // the following three members are used for handling refer request.
         SipSessionImpl mReferSession;
@@ -981,7 +1093,7 @@ class SipSessionGroup implements SipListener {
             return false;
         }
 
-        private boolean handleAuthentication(ResponseEvent event)
+        protected boolean handleAuthentication(ResponseEvent event)
                 throws SipException {
             Response response = event.getResponse();
             String nonce = getNonceFromResponse(response);
@@ -1094,6 +1206,10 @@ class SipSessionGroup implements SipListener {
                         generateTag(), duration);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                if (mMWISession != null) {
+                    removeSipSession(mMWISession);
+                    mMWISession = null;
+                }
                 startSessionTimer(REGISTRATION_TIMEOUT);
                 Rlog.i(SSI_TAG, "onRegistering - Register Command");
                 mProxy.onRegistering(this);
@@ -1104,6 +1220,10 @@ class SipSessionGroup implements SipListener {
                         generateTag(), 0);
                 mDialog = mClientTransaction.getDialog();
                 addSipSession(this);
+                if (mMWISession != null) {
+                    removeSipSession(mMWISession);
+                    mMWISession = null;
+                }
                 startSessionTimer(REGISTRATION_TIMEOUT);
                 Rlog.i(SSI_TAG, "onRegistering - Deregister Command");
                 mProxy.onRegistering(this);
@@ -1490,6 +1610,9 @@ class SipSessionGroup implements SipListener {
             reset();
             Rlog.i(SSI_TAG, "onRegistrationDone");
             mProxy.onRegistrationDone(this, duration);
+            if (mCallReceiverSession != null)
+                log("onRegistration: adding MWI listener");
+                mMWISession = new SipSessionMWIReceiverImpl(mCallReceiverSession.mProxy.getListener());
         }
 
         private void onRegistrationFailed(int errorCode, String message) {
@@ -1876,6 +1999,6 @@ class SipSessionGroup implements SipListener {
     }
 
     private void loge(String s, Throwable t) {
-        Rlog.e(TAG, s, t);
+       Rlog.e(TAG, s, t);
     }
 }

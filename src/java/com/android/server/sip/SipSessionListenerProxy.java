@@ -59,6 +59,21 @@ class SipSessionListenerProxy extends ISipSessionListener.Stub {
     }
 
     @Override
+    public void onMWI(final int count, final int total, final String call) {
+        if (mListener == null) return;
+        proxy(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    mListener.onMWI(count, total, call);
+                } catch (Throwable t) {
+                    handle(t, "onCalling()");
+                }
+            }
+        });
+    }
+
+    @Override
     public void onRinging(final ISipSession session, final SipProfile caller,
             final String sessionDescription) {
         if (mListener == null) return;
