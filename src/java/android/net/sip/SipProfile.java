@@ -61,6 +61,8 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
     private int mRegistrationTimeout = 3600;
     private boolean mSendKeepAlive = false;
     private boolean mAutoRegistration = true;
+    // can only be set on *one* SIP account
+    private boolean mOutgoingPhoneAccount = false;
     private transient int mCallingUid = 0;
 
     public static final Parcelable.Creator<SipProfile> CREATOR =
@@ -288,6 +290,11 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
             return this;
         }
 
+        public Builder setOutgoingPhoneAccount(boolean flag) {
+            mProfile.mOutgoingPhoneAccount = flag;
+            return this;
+        }
+
         /**
          * Builds and returns the SIP profile object.
          *
@@ -338,6 +345,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
         mPort = in.readInt();
         mAuthUserName = in.readString();
         mRegistrationTimeout = in.readInt();
+        mOutgoingPhoneAccount = (in.readInt() == 0) ? false : true;
     }
 
     @Override
@@ -354,6 +362,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
         out.writeInt(mPort);
         out.writeString(mAuthUserName);
         out.writeInt(mRegistrationTimeout);
+        out.writeInt(mOutgoingPhoneAccount ? 1 : 0);
     }
 
     @Override
@@ -504,6 +513,10 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
      */
     public boolean getAutoRegistration() {
         return mAutoRegistration;
+    }
+
+    public boolean getOutgoingPhoneAccount() {
+        return mOutgoingPhoneAccount;
     }
 
     /**
