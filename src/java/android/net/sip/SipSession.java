@@ -130,6 +130,9 @@ public final class SipSession {
                 String sessionDescription) {
         }
 
+	/**
+	 * @hide
+	 */
         public void onMWI(int count, int total, String call) {
         }
 
