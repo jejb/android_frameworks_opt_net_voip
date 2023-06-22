@@ -213,6 +213,7 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
          * @param timeout of the server
          * @return this builder object
          * @throws IllegalArgumentException if the port number is out of range
+	 * @hide
          */
         public Builder setRegistrationTimeout(int timeout) throws IllegalArgumentException {
             if ((timeout > 3600) || (timeout < 10)) {
@@ -291,6 +292,9 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
             return this;
         }
 
+	/**
+	 * @hide
+	 */
         public Builder setOutgoingPhoneAccount(boolean flag) {
             mProfile.mOutgoingPhoneAccount = flag;
             return this;
