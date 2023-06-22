@@ -87,10 +87,19 @@ public class SipManager {
      */
     public static final String EXTRA_OFFER_SD = "android:sipOfferSD";
 
+    /**
+     * @hide
+     */
     public static final String EXTRA_MWI_COUNT = "android:sipMWICount";
 
+    /**
+     * @hide
+     */
     public static final String EXTRA_MWI_TOTAL = "android:sipMWITotal";
 
+    /**
+     * @hide
+     */
     public static final String EXTRA_MWI_CALL = "android:sipMWICall";
 
     /**
@@ -501,24 +510,35 @@ public class SipManager {
         return incomingCallIntent.getStringExtra(EXTRA_OFFER_SD);
     }
 
+    /**
+     * @hide
+     */
     public static boolean isMWI(Intent intent) {
         return intent.getStringExtra(EXTRA_MWI_COUNT) != null;
     }
 
+    /**
+     * @hide
+     */
     public static int getMWIcount(Intent intent) {
         return Integer.decode(intent.getStringExtra(EXTRA_MWI_COUNT));
     }
 
+    /**
+     * @hide
+     */
     public static int getMWItotal(Intent intent) {
         return Integer.decode(intent.getStringExtra(EXTRA_MWI_TOTAL));
     }
 
+    /**
+     * @hide
+     */
     public static String getMWIcall(Intent intent) {
         return intent.getStringExtra(EXTRA_MWI_CALL);
     }
 
     /**
-     * Creates an incoming call broadcast intent.
      *
      * @param callId the call ID of the incoming call
      * @param sessionDescription the session description of the incoming call
@@ -533,7 +553,10 @@ public class SipManager {
         return intent;
     }
 
-    public static Intent createIncomingMWIBroadcast(int count,
+    /**
+     * @hide
+     */
+     public static Intent createIncomingMWIBroadcast(int count,
             int total, String call) {
         Intent intent = new Intent();
         intent.putExtra(EXTRA_MWI_COUNT, Integer.toString(count));
