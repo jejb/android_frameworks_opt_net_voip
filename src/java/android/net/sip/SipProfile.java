@@ -132,6 +132,9 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
             } else {
                 throw new ParseException(uriString + " is not a SIP URI", 0);
             }
+            String proto = mUri.getTransportParam();
+            if (proto != null)
+                mProfile.mProtocol = proto.toUpperCase();
             mProfile.mDomain = mUri.getHost();
         }
 
@@ -483,6 +486,10 @@ public class SipProfile implements Parcelable, Serializable, Cloneable {
      */
     public String getProtocol() {
         return mProtocol;
+    }
+
+    public boolean isSecure() {
+        return mProtocol.equals(TLS);
     }
 
     /**

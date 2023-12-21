@@ -19,6 +19,7 @@ package android.net.rtp;
 import java.net.InetAddress;
 import java.net.SocketException;
 
+import android.annotation.Nullable;
 /**
  * An AudioStream is a {@link RtpStream} which carrys audio payloads over
  * Real-time Transport Protocol (RTP). Two different classes are developed in
@@ -46,6 +47,9 @@ public class AudioStream extends RtpStream {
     private AudioCodec mCodec;
     private int mDtmfType = -1;
     private AudioGroup mGroup;
+    private String mCipher = null;
+    private byte[] mLocalKey = null;
+    private byte[] mRemoteKey = null;
 
     /**
      * Creates an AudioStream on the given local address. Note that the local
@@ -163,5 +167,32 @@ public class AudioStream extends RtpStream {
             }
         }
         mDtmfType = type;
+    }
+
+    @Nullable
+    public String getCipher() {
+        return mCipher;
+    }
+
+    @Nullable
+    public byte[] getLocalKey() {
+        return mLocalKey;
+    }
+
+    @Nullable
+    public byte[] getRemoteKey() {
+        return mRemoteKey;
+    }
+
+    public void setCipher(@Nullable String cipher) {
+        mCipher = cipher;
+    }
+
+    public void setLocalKey(@Nullable byte[] localKey) {
+        mLocalKey = localKey;
+    }
+
+    public void setRemoteKey(@Nullable byte[] remoteKey) {
+        mRemoteKey = remoteKey;
     }
 }

@@ -25,6 +25,7 @@ import android.net.rtp.AudioCodec;
 import android.net.rtp.AudioGroup;
 import android.net.rtp.AudioStream;
 import android.net.rtp.RtpStream;
+import android.net.rtp.Crypto;
 import android.net.sip.SimpleSessionDescription.Media;
 import android.net.wifi.WifiManager;
 import android.os.Message;
@@ -32,6 +33,8 @@ import android.telephony.Rlog;
 import android.text.TextUtils;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
@@ -176,12 +179,14 @@ public class SipAudioCall {
 
     private Context mContext;
     private SipProfile mLocalProfile;
+    private boolean mSecure;
     private SipAudioCall.Listener mListener;
     private SipSession mSipSession;
     private SipSession mTransferringSession;
 
     private long mSessionId = System.currentTimeMillis();
     private String mPeerSd;
+    private String mMySd;
 
     private AudioStream mAudioStream;
     private AudioGroup mAudioGroup;
@@ -205,6 +210,7 @@ public class SipAudioCall {
     public SipAudioCall(Context context, SipProfile localProfile) {
         mContext = context;
         mLocalProfile = localProfile;
+        mSecure = localProfile.isSecure();
         mWm = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
         mLock = new Object();
     }
@@ -326,6 +332,7 @@ public class SipAudioCall {
      * @return the peer's SIP profile
      */
     public SipProfile getPeerProfile() {
+        SipProfile profile;
         synchronized (mLock) {
             return (mSipSession == null) ? null : mSipSession.getPeerProfile();
         }
@@ -421,7 +428,7 @@ public class SipAudioCall {
 
                     // session changing request
                     try {
-                        String answer = createAnswer(sessionDescription).encode();
+                        String answer = createAnswer(sessionDescription);
                         mSipSession.answerCall(answer, SESSION_TIMEOUT);
                     } catch (Throwable e) {
                         loge("onRinging():", e);
@@ -548,9 +555,9 @@ public class SipAudioCall {
                 try {
                     if (sessionDescription == null) {
                         newSession.makeCall(newSession.getPeerProfile(),
-                                createOffer().encode(), TRANSFER_TIMEOUT);
+                                            createOffer(), TRANSFER_TIMEOUT);
                     } else {
-                        String answer = createAnswer(sessionDescription).encode();
+                        String answer = createAnswer(sessionDescription);
                         newSession.answerCall(answer, SESSION_TIMEOUT);
                     }
                 } catch (Throwable e) {
@@ -638,7 +645,7 @@ public class SipAudioCall {
                 mAudioStream = new AudioStream(InetAddress.getByName(
                         getLocalIp()));
                 sipSession.setListener(createListener());
-                sipSession.makeCall(peerProfile, createOffer().encode(),
+                sipSession.makeCall(peerProfile, createOffer(),
                         timeout);
             } catch (IOException e) {
                 loge("makeCall:", e);
@@ -708,7 +715,7 @@ public class SipAudioCall {
             try {
                 mAudioStream = new AudioStream(InetAddress.getByName(
                         getLocalIp()));
-                mSipSession.answerCall(createAnswer(mPeerSd).encode(), timeout);
+                mSipSession.answerCall(createAnswer(mPeerSd), timeout);
             } catch (IOException e) {
                 loge("answerCall:", e);
                 throw new SipException("answerCall()", e);
@@ -738,72 +745,103 @@ public class SipAudioCall {
         }
     }
 
-    private SimpleSessionDescription createOffer() {
+    private String createOffer() {
         SimpleSessionDescription offer =
                 new SimpleSessionDescription(mSessionId, getLocalIp());
         AudioCodec[] codecs = AudioCodec.getCodecs();
+        // SRTP first
         Media media = offer.newMedia(
-                "audio", mAudioStream.getLocalPort(), 1, "RTP/AVP");
+                "audio", mAudioStream.getLocalPort(), 1,
+                mSecure ? "RTP/SAVP" : "RTP/AVP");
         for (AudioCodec codec : AudioCodec.getCodecs()) {
             media.setRtpPayload(codec.type, codec.rtpmap, codec.fmtp);
         }
         media.setRtpPayload(127, "telephone-event/8000", "0-15");
+        if (mSecure) {
+            for (Crypto c : Crypto.getCryptos()) {
+                media.addCrypto(c);
+            }
+            // now add unencrypted offer just in case
+            media = offer.newMediaNoCrypt(media, "RTP/AVP");
+        }
         if (DBG) log("createOffer: offer=" + offer);
-        return offer;
+        mMySd = offer.encode();
+        return mMySd;
     }
 
-    private SimpleSessionDescription createAnswer(String offerSd) {
+    private String createAnswer(String offerSd) {
         if (TextUtils.isEmpty(offerSd)) return createOffer();
         SimpleSessionDescription offer =
                 new SimpleSessionDescription(offerSd);
         SimpleSessionDescription answer =
                 new SimpleSessionDescription(mSessionId, getLocalIp());
         AudioCodec codec = null;
-        for (Media media : offer.getMedia()) {
-            if ((codec == null) && (media.getPort() > 0)
+        final List<String> protos;
+        if (mSecure)
+            protos = Arrays.asList("RTP/SAVP", "RTP/AVP");
+        else
+            protos = Arrays.asList("RTP/AVP");
+        for (String proto : protos) {
+            for (Media media : offer.getMedia()) {
+                if ((codec == null) && (media.getPort() > 0)
                     && "audio".equals(media.getType())
-                    && "RTP/AVP".equals(media.getProtocol())) {
-                // Find the first audio codec we supported.
-                for (int type : media.getRtpPayloadTypes()) {
-                    codec = AudioCodec.getCodec(type, media.getRtpmap(type),
-                            media.getFmtp(type));
-                    if (codec != null) {
-                        break;
-                    }
-                }
-                if (codec != null) {
-                    Media reply = answer.newMedia(
-                            "audio", mAudioStream.getLocalPort(), 1, "RTP/AVP");
-                    reply.setRtpPayload(codec.type, codec.rtpmap, codec.fmtp);
-
-                    // Check if DTMF is supported in the same media.
+                    && proto.equals(media.getProtocol())) {
+                    // Find the first audio codec we supported.
                     for (int type : media.getRtpPayloadTypes()) {
-                        String rtpmap = media.getRtpmap(type);
-                        if ((type != codec.type) && (rtpmap != null)
-                                && rtpmap.startsWith("telephone-event")) {
-                            reply.setRtpPayload(
-                                    type, rtpmap, media.getFmtp(type));
+                        codec = AudioCodec.getCodec(type, media.getRtpmap(type),
+                                                    media.getFmtp(type));
+                        if (codec != null) {
+                            break;
                         }
                     }
+                    if (codec != null) {
+                        Media reply = answer.newMedia(
+                            "audio", mAudioStream.getLocalPort(), 1, proto);
+                        reply.setRtpPayload(codec.type, codec.rtpmap, codec.fmtp);
 
-                    // Handle recvonly and sendonly.
-                    if (media.getAttribute("recvonly") != null) {
-                        answer.setAttribute("sendonly", "");
-                    } else if(media.getAttribute("sendonly") != null) {
-                        answer.setAttribute("recvonly", "");
-                    } else if(offer.getAttribute("recvonly") != null) {
-                        answer.setAttribute("sendonly", "");
-                    } else if(offer.getAttribute("sendonly") != null) {
-                        answer.setAttribute("recvonly", "");
+                        // Check if DTMF is supported in the same media.
+                        for (int type : media.getRtpPayloadTypes()) {
+                            String rtpmap = media.getRtpmap(type);
+                            if ((type != codec.type) && (rtpmap != null)
+                                && rtpmap.startsWith("telephone-event")) {
+                                reply.setRtpPayload(
+                                    type, rtpmap, media.getFmtp(type));
+                            }
+                        }
+
+                        // if any crypto present, must be RTP/SAVP
+                        boolean validCrypto = true;
+                        for (Crypto c : media.getCryptos()) {
+                            validCrypto = false;
+                            if (c.valid()) {
+                                reply.addCrypto(c);
+                                // accept the first one we can
+                                validCrypto = true;
+                                break;
+                            }
+                        }
+                        if (!validCrypto)
+                            throw new IllegalArgumentException("offer has no crypto lines we support");
+
+                        // Handle recvonly and sendonly.
+                        if (media.getAttribute("recvonly") != null) {
+                            answer.setAttribute("sendonly", "");
+                        } else if(media.getAttribute("sendonly") != null) {
+                            answer.setAttribute("recvonly", "");
+                        } else if(offer.getAttribute("recvonly") != null) {
+                            answer.setAttribute("sendonly", "");
+                        } else if(offer.getAttribute("sendonly") != null) {
+                            answer.setAttribute("recvonly", "");
+                        }
+                        continue;
                     }
-                    continue;
                 }
-            }
-            // Reject the media.
-            Media reply = answer.newMedia(
-                    media.getType(), 0, 1, media.getProtocol());
-            for (String format : media.getFormats()) {
-                reply.setFormat(format, null);
+                // Reject the media.
+                Media reply = answer.newMedia(
+                        media.getType(), 0, 1, media.getProtocol());
+                for (String format : media.getFormats()) {
+                    reply.setFormat(format, null);
+                }
             }
         }
         if (codec == null) {
@@ -811,7 +849,8 @@ public class SipAudioCall {
             throw new IllegalStateException("Reject SDP: no suitable codecs");
         }
         if (DBG) log("createAnswer: answer=" + answer);
-        return answer;
+        mMySd = answer.encode();
+        return mMySd;
     }
 
     private SimpleSessionDescription createHoldOffer() {
@@ -823,15 +862,24 @@ public class SipAudioCall {
 
     private SimpleSessionDescription createContinueOffer() {
         if (DBG) log("createContinueOffer");
+        Crypto crypto = null;
+
+        if (mAudioStream.getCipher() != null) {
+            crypto = new Crypto(1, mAudioStream.getCipher());
+        }
         SimpleSessionDescription offer =
                 new SimpleSessionDescription(mSessionId, getLocalIp());
         Media media = offer.newMedia(
-                "audio", mAudioStream.getLocalPort(), 1, "RTP/AVP");
+                "audio", mAudioStream.getLocalPort(), 1,
+                crypto == null ? "RTP/AVP" : "RTP/SAVP");
         AudioCodec codec = mAudioStream.getCodec();
         media.setRtpPayload(codec.type, codec.rtpmap, codec.fmtp);
         int dtmfType = mAudioStream.getDtmfType();
         if (dtmfType != -1) {
             media.setRtpPayload(dtmfType, "telephone-event/8000", "0-15");
+        }
+        if (crypto != null) {
+            media.addCrypto(crypto);
         }
         return offer;
     }
@@ -1017,63 +1065,115 @@ public class SipAudioCall {
         if (mPeerSd == null) {
             throw new IllegalStateException("mPeerSd = null");
         }
+        if (mMySd == null) {
+            throw new IllegalStateException("mMySd = null");
+        }
 
         stopCall(DONT_RELEASE_SOCKET);
         mInCall = true;
 
         // Run exact the same logic in createAnswer() to setup mAudioStream.
+        /*
+         * jejb: we stick to the offer/answer terminology here to
+         * avoid renaming the variables, but in reality offer is the
+         * remote sdp and answer is the local (if we initiated the
+         * call, their roles are reversed in spite of the names).
+         */
         SimpleSessionDescription offer =
                 new SimpleSessionDescription(mPeerSd);
+        SimpleSessionDescription answer =
+                new SimpleSessionDescription(mMySd);
         AudioStream stream = mAudioStream;
         AudioCodec codec = null;
-        for (Media media : offer.getMedia()) {
-            if ((codec == null) && (media.getPort() > 0)
+        Crypto crypto = null;
+        final List<String> protos;
+        if (mSecure)
+            protos = Arrays.asList("RTP/SAVP", "RTP/AVP");
+        else
+            protos = Arrays.asList("RTP/AVP");
+        outerloop:
+        for (String proto : protos) {
+            for (Media media : offer.getMedia()) {
+                if ((codec == null) && (media.getPort() > 0)
                     && "audio".equals(media.getType())
-                    && "RTP/AVP".equals(media.getProtocol())) {
-                // Find the first audio codec we supported.
-                for (int type : media.getRtpPayloadTypes()) {
-                    codec = AudioCodec.getCodec(
-                            type, media.getRtpmap(type), media.getFmtp(type));
-                    if (codec != null) {
-                        break;
-                    }
-                }
-
-                if (codec != null) {
-                    // Associate with the remote host.
-                    String address = media.getAddress();
-                    if (address == null) {
-                        address = offer.getAddress();
-                    }
-                    stream.associate(InetAddress.getByName(address),
-                            media.getPort());
-
-                    stream.setDtmfType(-1);
-                    stream.setCodec(codec);
-                    // Check if DTMF is supported in the same media.
+                    && proto.equals(media.getProtocol())) {
+                    // Find the first audio codec we supported.
                     for (int type : media.getRtpPayloadTypes()) {
-                        String rtpmap = media.getRtpmap(type);
-                        if ((type != codec.type) && (rtpmap != null)
-                                && rtpmap.startsWith("telephone-event")) {
-                            stream.setDtmfType(type);
+                        codec = AudioCodec.getCodec(
+                            type, media.getRtpmap(type), media.getFmtp(type));
+                        if (codec != null) {
+                            break;
                         }
                     }
 
-                    // Handle recvonly and sendonly.
-                    if (mHold) {
-                        stream.setMode(RtpStream.MODE_NORMAL);
-                    } else if (media.getAttribute("recvonly") != null) {
-                        stream.setMode(RtpStream.MODE_SEND_ONLY);
-                    } else if(media.getAttribute("sendonly") != null) {
-                        stream.setMode(RtpStream.MODE_RECEIVE_ONLY);
-                    } else if(offer.getAttribute("recvonly") != null) {
-                        stream.setMode(RtpStream.MODE_SEND_ONLY);
-                    } else if(offer.getAttribute("sendonly") != null) {
-                        stream.setMode(RtpStream.MODE_RECEIVE_ONLY);
-                    } else {
-                        stream.setMode(RtpStream.MODE_NORMAL);
+                    // find the first crypto in that media
+                    for (Crypto c: media.getCryptos()) {
+                        if (c.valid())
+                                crypto = c;
                     }
-                    break;
+
+                    if (codec != null) {
+                        // Associate with the remote host.
+                        String address = media.getAddress();
+                        if (address == null) {
+                            address = offer.getAddress();
+                        }
+                        stream.associate(InetAddress.getByName(address),
+                                         media.getPort());
+
+                        stream.setDtmfType(-1);
+                        stream.setCodec(codec);
+                        if (crypto != null) {
+                            String cipher = crypto.getCipher();
+                            byte[] localKey = null;
+
+                            stream.setCipher(cipher);
+                            stream.setRemoteKey(crypto.getKey());
+
+                            for(Media am : answer.getMedia()) {
+                                if (am.getPort() == 0)
+                                    continue;
+                                if (!"audio".equals(am.getType()))
+                                    continue;
+                                if (!"RTP/SAVP".equals(am.getProtocol()))
+                                    continue;
+                                for (Crypto c : am.getCryptos()) {
+                                    if (cipher.equals(c.getCipher())) {
+                                        localKey = c.getKey();
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                            if (localKey == null)
+                                throw new IllegalStateException("Unable to find local key!!");
+                            stream.setLocalKey(localKey);
+                        }
+                        // Check if DTMF is supported in the same media.
+                        for (int type : media.getRtpPayloadTypes()) {
+                            String rtpmap = media.getRtpmap(type);
+                            if ((type != codec.type) && (rtpmap != null)
+                                && rtpmap.startsWith("telephone-event")) {
+                                stream.setDtmfType(type);
+                            }
+                        }
+
+                        // Handle recvonly and sendonly.
+                        if (mHold) {
+                            stream.setMode(RtpStream.MODE_NORMAL);
+                        } else if (media.getAttribute("recvonly") != null) {
+                            stream.setMode(RtpStream.MODE_SEND_ONLY);
+                        } else if(media.getAttribute("sendonly") != null) {
+                            stream.setMode(RtpStream.MODE_RECEIVE_ONLY);
+                        } else if(offer.getAttribute("recvonly") != null) {
+                            stream.setMode(RtpStream.MODE_SEND_ONLY);
+                        } else if(offer.getAttribute("sendonly") != null) {
+                            stream.setMode(RtpStream.MODE_RECEIVE_ONLY);
+                        } else {
+                            stream.setMode(RtpStream.MODE_NORMAL);
+                        }
+                        break outerloop;
+                    }
                 }
             }
         }
