@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 
+import android.net.rtp.Crypto;
+
 /**
  * An object used to manipulate messages of Session Description Protocol (SDP).
  * It is mainly designed for the uses of Session Initiation Protocol (SIP).
@@ -113,11 +115,23 @@ public class SimpleSessionDescription {
      * @param type The media type, e.g. {@code "audio"}.
      * @param port The first transport port used by this media.
      * @param portCount The number of contiguous ports used by this media.
-     * @param protocol The transport protocol, e.g. {@code "RTP/AVP"}.
+     * @param protocol The transport protocol, e.g. {@code "RTP/SAVP"}.
      */
     public Media newMedia(String type, int port, int portCount,
             String protocol) {
         Media media = new Media(type, port, portCount, protocol);
+        mMedia.add(media);
+        return media;
+    }
+
+    /**
+     * Creates a new media description in this session description.
+     *
+     * @param m The original Media
+     * @param protocol The transport protocol, e.g. {@code "RTP/AVP"}.
+     */
+    public Media newMediaNoCrypt(Media m, String protocol) {
+        Media media = new Media(m, protocol);
         mMedia.add(media);
         return media;
     }
@@ -240,6 +254,7 @@ public class SimpleSessionDescription {
         private final int mPortCount;
         private final String mProtocol;
         private ArrayList<String> mFormats = new ArrayList<String>();
+        private ArrayList<Integer> mCryptoTags = new ArrayList<Integer>();
 
         private Media(String type, int port, int portCount, String protocol) {
             super("icbka");
@@ -247,6 +262,21 @@ public class SimpleSessionDescription {
             mPort = port;
             mPortCount = portCount;
             mProtocol = protocol;
+        }
+
+        private Media(Media m, String protocol) {
+            super(m);
+
+            mType = m.mType;
+            mPort = m.mPort;
+            mPortCount = m.mPortCount;
+            mProtocol = protocol;
+            mFormats = m.mFormats;
+
+            // strip the "a=crypto:" lines
+            int i;
+            while ((i = super.find("a=crypto", ':')) != -1)
+                mLines.remove(i);
         }
 
         /**
@@ -357,6 +387,38 @@ public class SimpleSessionDescription {
             super.set("a=fmtp:" + format, ' ', fmtp);
         }
 
+        public void addCrypto(Crypto c) {
+            mCryptoTags.remove(Integer.valueOf(c.getTag()));
+            mCryptoTags.add(Integer.valueOf(c.getTag()));
+
+            super.set("a=crypto:" + c.getTag(), ' ', c.getRest());
+        }
+
+        public ArrayList<Crypto> getCryptos() {
+            ArrayList l = new ArrayList<Crypto>();
+            for (Integer mI : mCryptoTags) {
+		int i = mI.intValue();
+                l.add(new Crypto(i, super.get("a=crypto:" + i, ' ')));
+            }
+
+            return l;
+        }
+
+        void parse(String line) {
+            super.parse(line);
+            if (!line.startsWith("a=crypto:")) {
+                return;
+            }
+            String[] parts = line.split("[: ]");
+            int tag = Integer.valueOf(parts[1]);
+            if (tag <= 0) {
+                throw new IllegalArgumentException("Invalid SDP: crypto tag: "
+                                                   + line);
+            }
+            mCryptoTags.remove(Integer.valueOf(tag));
+            mCryptoTags.add(Integer.valueOf(tag));
+        }
+
         /**
          * Removes a RTP payload and its {@code rtpmap} and {@code fmtp}
          * attributes.
@@ -389,10 +451,18 @@ public class SimpleSessionDescription {
      */
     private static class Fields {
         private final String mOrder;
-        private final ArrayList<String> mLines = new ArrayList<String>();
+        protected final ArrayList<String> mLines;
 
         Fields(String order) {
             mOrder = order;
+            mLines = new ArrayList<String>();
+        }
+
+        Fields(Fields f) {
+            this(f.mOrder);
+            for (String s : f.mLines) {
+                mLines.add(s);
+            }
         }
 
         /**
@@ -524,13 +594,14 @@ public class SimpleSessionDescription {
         /**
          * Invokes {@link #set} after splitting the line into three parts.
          */
-        private void parse(String line) {
+        void parse(String line) {
             char type = line.charAt(0);
             if (mOrder.indexOf(type) == -1) {
                 return;
             }
             char delimiter = '=';
-            if (line.startsWith("a=rtpmap:") || line.startsWith("a=fmtp:")) {
+            if (line.startsWith("a=rtpmap:") || line.startsWith("a=fmtp:")
+                || line.startsWith("a=crypto:")) {
                 delimiter = ' ';
             } else if (type == 'b' || type == 'a') {
                 delimiter = ':';
