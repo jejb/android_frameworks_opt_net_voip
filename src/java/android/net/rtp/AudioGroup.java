@@ -175,7 +175,9 @@ public class AudioGroup {
                     id = nativeAdd(stream.getMode(), stream.getSocket(),
                             stream.getRemoteAddress().getHostAddress(),
                             stream.getRemotePort(), codecSpec, stream.getDtmfType(),
-                            attributionSourceState.getParcel());
+                            attributionSourceState.getParcel(),
+                            stream.getCipher(), stream.getLocalKey(),
+                            stream.getRemoteKey());
                 }
                 mStreams.put(stream, id);
             } catch (NullPointerException e) {
@@ -185,7 +187,8 @@ public class AudioGroup {
     }
 
     private native long nativeAdd(int mode, int socket, String remoteAddress, int remotePort,
-            String codecSpec, int dtmfType, Parcel attributionSource);
+            String codecSpec, int dtmfType, Parcel attributionSource,
+            String cipher, byte[] inkey, byte[] outkey);
 
     // Package-private method used by AudioStream.join().
     synchronized void remove(AudioStream stream) {
