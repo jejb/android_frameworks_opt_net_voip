@@ -28,6 +28,8 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include <srtp2/srtp.h>
+
 // #define LOG_NDEBUG 0
 #define LOG_TAG "AudioGroup"
 #include <cutils/atomic.h>
@@ -100,6 +102,9 @@ public:
         AudioCodec *codec, int sampleRate, int sampleCount,
         int codecType, int dtmfType);
 
+    const char *setCipher(const char *cipher, unsigned char *inkey,
+                          unsigned char *outkey);
+
     void sendDtmf(int event);
     bool mix(int32_t *output, int head, int tail, int sampleRate);
     void encode(int tick, AudioStream *chain);
@@ -143,6 +148,9 @@ private:
 
     AudioStream *mNext;
 
+    srtp_ctx_t *srtpIn;
+    srtp_ctx_t *srtpOut;
+
     friend class AudioGroup;
 };
 
@@ -152,6 +160,8 @@ AudioStream::AudioStream()
     mCodec = NULL;
     mBuffer = NULL;
     mNext = NULL;
+    srtpIn = NULL;
+    srtpOut = NULL;
 }
 
 AudioStream::~AudioStream()
@@ -159,7 +169,59 @@ AudioStream::~AudioStream()
     close(mSocket);
     delete mCodec;
     delete [] mBuffer;
+    if (srtpIn || srtpOut) {
+        srtp_dealloc(srtpIn);
+        srtp_dealloc(srtpOut);
+    }
     ALOGD("stream[%d] is dead", mSocket);
+}
+
+const char *AudioStream::setCipher(const char *cipher, unsigned char *inkey,
+                                   unsigned char *outkey)
+{
+    srtp_policy_t policy;
+
+    memset(&policy, 0, sizeof(policy));
+
+    /*
+     * Cipher list here must match strings in Crypto.java
+     */
+    if (strcmp(cipher, "AES_CM_128_HMAC_SHA1_32") == 0) {
+        srtp_crypto_policy_set_aes_cm_128_hmac_sha1_32(&policy.rtp);
+    } else if (strcmp(cipher, "AES_CM_128_HMAC_SHA1_80") == 0) {
+        srtp_crypto_policy_set_aes_cm_128_hmac_sha1_80(&policy.rtp);
+    } else if (strcmp(cipher, "AEAD_AES_128_GCM") == 0) {
+        srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtp);
+    } else if (strcmp(cipher, "AEAD_AES_128_GCM_8") == 0) {
+        srtp_crypto_policy_set_aes_gcm_128_8_auth(&policy.rtp);
+    } else {
+        ALOGE("stream[%d] unrecognized cipher %s", mSocket, cipher);
+        return "Unrecognized cipher";
+    }
+
+    // use the policy twice (it gets copied not pointed to)
+    policy.ssrc.type = ssrc_any_inbound;
+    policy.ssrc.value = 0;
+    policy.key = inkey;
+    policy.allow_repeat_tx = 1;
+    auto ret = srtp_create(&srtpIn, &policy);
+    if (ret != srtp_err_status_ok) {
+        ALOGE("stream[%d] failed to allocate ctx for cipher %s", mSocket,
+              cipher);
+        return "Failed to allocate srtp ctx for inkey";
+    }
+    policy.ssrc.type = ssrc_any_outbound;
+    policy.ssrc.value = 0;
+    policy.key = outkey;
+    policy.allow_repeat_tx = 1;
+    ret = srtp_create(&srtpOut, &policy);
+    if (ret != srtp_err_status_ok) {
+        ALOGE("stream[%d] failed to allocate ctx for cipher %s", mSocket,
+              cipher);
+        return "Failed to allocate srtp ctx for outkey";
+    }
+    ALOGD("stream[%d] set cipher %s", mSocket, cipher);
+    return NULL;
 }
 
 bool AudioStream::set(int mode, int socket, sockaddr_storage *remote,
@@ -283,7 +345,8 @@ void AudioStream::encode(int tick, AudioStream *chain)
         // Make sure duration is reasonable.
         if (duration >= 0 && duration < mSampleRate * DTMF_PERIOD) {
             duration += mSampleCount;
-            int32_t buffer[4] = {
+            // 5 words of slop for encryption
+            int32_t buffer[9] = {
                 static_cast<int32_t>(htonl(mDtmfMagic | mSequence)),
                 static_cast<int32_t>(htonl(mDtmfStart)),
                 static_cast<int32_t>(mSsrc),
@@ -293,14 +356,27 @@ void AudioStream::encode(int tick, AudioStream *chain)
                 buffer[3] |= htonl(1 << 23);
                 mDtmfEvent = -1;
             }
-            sendto(mSocket, buffer, sizeof(buffer), MSG_DONTWAIT,
-                (sockaddr *)&mRemote, sizeof(mRemote));
+            int length = 16;    // size of the unencrypted buffer
+            if (srtpOut) {
+                int len = length;
+                auto ret = srtp_protect(srtpOut, buffer, &len);
+                if (ret != srtp_err_status_ok) {
+                    ALOGE("stream[%d] failed on encrypt %d", mSocket, ret);
+                    return;
+                }
+                length = len;
+            }
+            sendto(mSocket, buffer, length, MSG_DONTWAIT,
+                   (sockaddr *)&mRemote, sizeof(mRemote));
             return;
         }
         mDtmfEvent = -1;
     }
-
-    int32_t buffer[mSampleCount + 3];
+    /*
+     * For encrypted SRTP we need slop in the buffer for the authentication
+     * tag and padding, so reserve 5 words
+     */
+    int32_t buffer[mSampleCount + 3 + (srtpOut ? 5 : 0)];
     bool data = false;
     if (mMode != RECEIVE_ONLY) {
         // Mix all other streams.
@@ -353,6 +429,15 @@ void AudioStream::encode(int tick, AudioStream *chain)
         ALOGV("stream[%d] encoder error", mSocket);
         return;
     }
+    if (srtpOut) {
+        int len = length + 12;
+        auto ret = srtp_protect(srtpOut, buffer, &len);
+        if (ret != srtp_err_status_ok) {
+            ALOGE("stream[%d] failed on encrypt %d", mSocket, ret);
+            return;
+        }
+        length = len - 12;
+    }
     sendto(mSocket, buffer, length + 12, MSG_DONTWAIT, (sockaddr *)&mRemote,
         sizeof(mRemote));
 }
@@ -386,7 +471,7 @@ void AudioStream::decode(int tick)
         mLatencyScore = score;
         mLatencyTimer = tick;
     } else if (tick - mLatencyTimer >= MEASURE_PERIOD) {
-        ALOGV("stream[%d] reduces latency of %dms", mSocket, mLatencyScore);
+        ALOGD("stream[%d] reduces latency of %dms", mSocket, mLatencyScore);
         mBufferTail -= mLatencyScore;
         mLatencyScore = -1;
     }
@@ -394,7 +479,7 @@ void AudioStream::decode(int tick)
     int count = (BUFFER_SIZE - (mBufferTail - mBufferHead)) * mSampleRate;
     if (count < mSampleCount) {
         // Buffer overflow. Drop the packet.
-        ALOGV("stream[%d] buffer overflow", mSocket);
+        ALOGD("stream[%d] buffer overflow", mSocket);
         recv(mSocket, &c, 1, MSG_DONTWAIT);
         return;
     }
@@ -418,20 +503,29 @@ void AudioStream::decode(int tick)
         // reliable but at least they can be used to identify duplicates?
         if (length < 12 || length > bufferSize ||
             (ntohl(*(uint32_t *)buffer) & 0xC07F0000) != mCodecMagic) {
-            ALOGV("stream[%d] malformed packet", mSocket);
+            ALOGD("stream[%d] malformed packet", mSocket);
             return;
         }
         int offset = 12 + ((buffer[0] & 0x0F) << 2);
         if (offset+2 >= bufferSize) {
-            ALOGV("invalid buffer offset: %d", offset+2);
+            ALOGD("invalid buffer offset: %d", offset+2);
             return;
         }
         if ((buffer[0] & 0x10) != 0) {
             offset += 4 + (ntohs(*(uint16_t *)&buffer[offset + 2]) << 2);
         }
         if (offset >= bufferSize) {
-            ALOGV("invalid buffer offset: %d", offset);
+            ALOGD("invalid buffer offset: %d", offset);
             return;
+        }
+        if (srtpIn) {
+            int len = length;
+            auto ret = srtp_unprotect(srtpIn, buffer, &len);
+            if (ret != srtp_err_status_ok) {
+                ALOGE("stream[%d] decrypt failed %d", mSocket, ret);
+                return;
+            }
+            length = len;
         }
         if ((buffer[0] & 0x20) != 0) {
             length -= buffer[length - 1];
@@ -953,7 +1047,8 @@ static jfieldID gMode;
 
 jlong add(JNIEnv *env, jobject thiz, jint mode,
     jint socket, jstring jRemoteAddress, jint remotePort,
-    jstring jCodecSpec, jint dtmfType, jstring opPackageNameStr)
+    jstring jCodecSpec, jint dtmfType, jstring opPackageNameStr,
+    jstring jCipher, jbyteArray local_key, jbyteArray remote_key)
 {
     AudioCodec *codec = NULL;
     AudioStream *stream = NULL;
@@ -1004,6 +1099,25 @@ jlong add(JNIEnv *env, jobject thiz, jint mode,
         jniThrowException(env, "java/lang/IllegalStateException",
             "cannot initialize audio stream");
         goto error;
+    }
+    if (jCipher) {
+        const char *cipher = env->GetStringUTFChars(jCipher, NULL);
+        if (!cipher) {
+            // Exception already thrown.
+            return 0;
+        }
+        jbyte *inkey = env->GetByteArrayElements(remote_key, NULL);
+        jbyte *outkey = env->GetByteArrayElements(local_key, NULL);
+
+        const char *ret = stream->setCipher(cipher, (unsigned char *)inkey,
+                                            (unsigned char *)outkey);
+        env->ReleaseByteArrayElements(remote_key, inkey, JNI_ABORT);
+        env->ReleaseByteArrayElements(local_key, outkey, JNI_ABORT);
+        env->ReleaseStringUTFChars(jCipher, cipher);
+        if (ret) {
+            jniThrowException(env, "java/lang/IllegalStateException", ret);
+            return 0;
+        }
     }
     socket = -1;
     codec = NULL;
@@ -1068,7 +1182,7 @@ void sendDtmf(JNIEnv *env, jobject thiz, jint event)
 }
 
 JNINativeMethod gMethods[] = {
-    {"nativeAdd", "(IILjava/lang/String;ILjava/lang/String;ILjava/lang/String;)J", (void *)add},
+    {"nativeAdd", "(IILjava/lang/String;ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;[B[B)J", (void *)add},
     {"nativeRemove", "(J)V", (void *)remove},
     {"nativeSetMode", "(I)V", (void *)setMode},
     {"nativeSendDtmf", "(I)V", (void *)sendDtmf},
@@ -1092,5 +1206,11 @@ int registerAudioGroup(JNIEnv *env)
         ALOGE("JNI registration failed");
         return -1;
     }
+    auto err = srtp_init();
+    if (err != srtp_err_status_ok) {
+        ALOGE("SRTP initialization failed");
+        return -1;
+    }
+
     return 0;
 }
