@@ -52,6 +52,7 @@ cc_library_shared {
         "framework-permission-aidl-cpp",
         "libstagefright_amrnbdec",
         "libstagefright_amrnbenc",
+        "libsrtp2",
     ],
     cflags: [
         "-fvisibility=hidden",
