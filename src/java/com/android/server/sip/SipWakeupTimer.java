@@ -82,8 +82,10 @@ class SipWakeupTimer extends BroadcastReceiver {
     }
 
     private void cancelAlarm() {
-        mAlarmManager.cancel(mPendingIntent);
-        mPendingIntent = null;
+	if (mPendingIntent != null) {
+            mAlarmManager.cancel(mPendingIntent);
+            mPendingIntent = null;
+        }
     }
 
     private void recalculatePeriods() {
@@ -216,7 +218,8 @@ class SipWakeupTimer extends BroadcastReceiver {
         intent.putExtra(TRIGGER_TIME, event.mTriggerTime);
         PendingIntent pendingIntent = mPendingIntent =
                 PendingIntent.getBroadcast(mContext, 0, intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT);
+                        PendingIntent.FLAG_UPDATE_CURRENT |
+                        PendingIntent.FLAG_IMMUTABLE);
         mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                 event.mTriggerTime, pendingIntent);
     }
