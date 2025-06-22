@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Random;
 
 import android.annotation.NonNull;
+import android.annotation.SuppressLint;
 
 /**
  * This class defines a collection of encryptions to be used with
@@ -28,6 +29,7 @@ import android.annotation.NonNull;
  *
  * @see AudioStream
  */
+@SuppressLint("UnflaggedApi")
 public class Crypto {
     /**
      * The RTP payload type of the encoding.
@@ -58,6 +60,7 @@ public class Crypto {
      * we pick up the key from it (and ignore any lifetime or MKI
      * parameters)
      */
+    @SuppressLint("UnflaggedApi")
     public Crypto(int tag, @NonNull String rest) {
         this.tag = tag;
         String[] splits = rest.split(" ");
@@ -81,30 +84,36 @@ public class Crypto {
      * Returns system supported Cryptos
      */
     @NonNull
+    @SuppressLint("UnflaggedApi")
     public static List<Crypto> getCryptos() {
 	return Arrays.asList(sCryptos);
     }
 
+    @SuppressLint("UnflaggedApi")
     public int getTag() {
         return tag;
     }
 
     @NonNull
+    @SuppressLint("UnflaggedApi")
     public String getCipher() {
         return cipher;
     }
 
     @NonNull
+    @SuppressLint("UnflaggedApi")
     public byte[] getKey() {
         return key;
     }
 
     @NonNull
+    @SuppressLint("UnflaggedApi")
     public String getRest() {
         String bkey = new String(Base64.getEncoder().encode(key));
 
         return cipher + " inline:" + bkey;
     }
+    @SuppressLint("UnflaggedApi")
     public boolean valid() {
         for (Crypto s : sCryptos) {
             if (cipher.equals(s.cipher))
