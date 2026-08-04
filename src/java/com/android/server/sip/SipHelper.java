@@ -252,10 +252,15 @@ class SipHelper {
             String tag) throws ParseException, SipException {
         FromHeader fromHeader = createFromHeader(userProfile, tag);
         ToHeader toHeader = createToHeader(userProfile);
+	SipURI requestURI;
 
-        String replaceStr = Pattern.quote(userProfile.getUserName() + "@");
-        SipURI requestURI = mAddressFactory.createSipURI(
-                userProfile.getUriString().replaceFirst(replaceStr, ""));
+	if (Request.SUBSCRIBE.equals(requestType)) {
+	    requestURI = mAddressFactory.createSipURI(userProfile.getUriString());
+	} else {
+	    String replaceStr = Pattern.quote(userProfile.getUserName() + "@");
+	    requestURI = mAddressFactory.createSipURI(
+		userProfile.getUriString().replaceFirst(replaceStr, ""));
+	}
 
         List<ViaHeader> viaHeaders = createViaHeaders();
         CallIdHeader callIdHeader = createCallIdHeader();

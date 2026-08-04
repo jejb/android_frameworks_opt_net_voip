@@ -472,11 +472,11 @@ class SipSessionGroup implements SipListener {
                 try {
                     Scanner s = new Scanner(line);
                     String type = s.next();
-                    if (type.equals("voice-message:")) {
+                    if (type.equalsIgnoreCase("voice-message:")) {
                         String[] val = s.next().split("/");
                         count = Integer.decode(val[0]);
                         total = Integer.decode(val[1]);
-                    } else if (type.equals("message-account:")) {
+                    } else if (type.equalsIgnoreCase("message-account:")) {
                         String[] val1 = s.next().split(":");
                         // val1[0] should be "sip"
                         String[] val2 = val1[1].split("@");
